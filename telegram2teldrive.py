@@ -1,5 +1,6 @@
 import os
 import argparse
+import tomllib
 import logging
 import mimetypes
 import json
@@ -13,16 +14,9 @@ from psycopg2 import sql, IntegrityError
 from telethon import TelegramClient
 from telethon.tl.types import InputMessagesFilterDocument
 
-# Set up argument parser
-parser = argparse.ArgumentParser(description='Configure logging level.')
-parser.add_argument(
-  '--log-level',
-  type=str,
-  help='Set the logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL).',
-  default=os.getenv('LOG_LEVEL', 'INFO'),  # Default to environment variable or DEBUG
-)
-
-args = parser.parse_args()
+# Configure rich logging
+logging.basicConfig(level=logging.INFO, format='%(message)s', handlers=[RichHandler()])
+logger = logging.getLogger('rich')
 
 # Map string log levels to logging constants
 log_levels = {
@@ -33,36 +27,162 @@ log_levels = {
   'CRITICAL': logging.CRITICAL,
 }
 
-# Get the logging level from the command line argument or environment variable
-log_level = log_levels.get(args.log_level.upper(), logging.INFO)
 
-# Configure rich logging
-logging.basicConfig(level=log_level, format='%(message)s', handlers=[RichHandler()])
+def load_toml_config(path):
+  """Load a TOML file from the given path and return a dictionary."""
+  try:
+    with open(path, 'rb') as f:
+      config = tomllib.load(f)
+      return config
+  except Exception as exc:
+    logger.error(f"Failed to load TOML config file '{path}': '{exc}'")
+    return {}
 
-logger = logging.getLogger('rich')
 
-# Replace these with your own values
-api_id = '<app_id>'
-api_hash = '<api_hash>'
-phone_number = '<phone number>'  # Your phone number in international format
+def setup_argparser(config):
+  """
+  Setup argparse using values from the provided config dictionary.
+  The config is expected to have keys based on your TOML structure. For example:
 
-# Database connection parameters
-db_params = {
-  'dbname': '<db name>',
-  'user': '<db username>',
-  'password': '<db password>',
-  'host': 'localhost',
-  'port': '5432',  # Default PostgreSQL port
-}
+  [telegram]
+  api-id = "12345"
 
-# Create the Telegram client
-client = TelegramClient('user_session', api_id, api_hash).start(phone=phone_number)
+  [database]
+  name = "mydb"
+  """
+  parser = argparse.ArgumentParser(
+    description='Find existing files in Telegram channels that have not been uploaded using Teldrive, and add them to the Teldrive DB.',
+    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+  )
+
+  # Utility function to safely retrieve values from the TOML config dictionary.
+  def get_config(section, key, fallback=None):
+    return config.get(section, {}).get(key, fallback)
+
+  parser.add_argument(
+    '--log-level',
+    type=str,
+    help='Set the logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL).',
+    default=os.getenv('LOG_LEVEL', 'INFO'),
+  )
+  parser.add_argument(
+    '--config',
+    type=str,
+    help='Path to configuration file',
+    default=os.getenv('CONFIG_FILE', None),
+  )
+  parser.add_argument(
+    '--api-id',
+    type=str,
+    help='Telegram API ID',
+    default=os.getenv('API_ID', get_config('telegram', 'api-id')),
+  )
+  parser.add_argument(
+    '--api-hash',
+    type=str,
+    help='Telegram API Hash',
+    default=os.getenv('API_HASH', get_config('telegram', 'api-hash')),
+  )
+  parser.add_argument(
+    '--phone-number',
+    type=str,
+    help='Telegram Phone Number',
+    default=os.getenv('PHONE_NUMBER', get_config('telegram', 'phone-number')),
+  )
+  parser.add_argument(
+    '--db-name',
+    type=str,
+    help='Database name',
+    default=os.getenv('DB_NAME', get_config('database', 'name')),
+  )
+  parser.add_argument(
+    '--db-user',
+    type=str,
+    help='Database user',
+    default=os.getenv('DB_USER', get_config('database', 'user')),
+  )
+  parser.add_argument(
+    '--db-password',
+    type=str,
+    help='Database password',
+    default=os.getenv('DB_PASSWORD', get_config('database', 'password')),
+  )
+  parser.add_argument(
+    '--db-host',
+    type=str,
+    help='Database host',
+    default=os.getenv('DB_HOST', get_config('database', 'host', 'localhost')),
+  )
+  parser.add_argument(
+    '--db-port',
+    type=str,
+    help='Database port',
+    default=os.getenv('DB_PORT', get_config('database', 'port', '5432')),
+  )
+  parser.add_argument(
+    '--folder-name',
+    type=str,
+    help='Name of the base folder to create',
+    default=os.getenv(
+      'FOLDER_NAME', get_config('teldrive', 'folder_name', 'Imported')
+    ),
+  )
+  parser.add_argument(
+    '--channels',
+    type=str,
+    help='Comma-separated list of channel IDs to search',
+    default=os.getenv('CHANNELS', get_config('telegram', 'channels')),
+  )
+
+  return parser.parse_args()
+
+
+def setup_configuration():
+  """Setup configuration from environment variables, config file, and command-line arguments."""
+  # Load configuration from file provided via the CONFIG_FILE environment variable
+  config = {}
+  env_config_file = os.getenv('CONFIG_FILE')
+  if env_config_file:
+    logger.info(f"Loading config from ENV file: '{env_config_file}'")
+    config = load_toml_config(env_config_file)
+
+  args = setup_argparser(config)
+
+  # If config file provided via the command-line argument --config, load it and re-parse args.
+  if args.config:
+    logger.info(f"Loading config from provided file: '{args.config}'")
+    config = load_toml_config(args.config)
+    args = setup_argparser(config)
+
+  # Get the logging level from the command line argument or environment variable
+  logger.setLevel(log_levels.get(args.log_level.upper(), logging.INFO))
+
+  logger.info('Configuration Parameters:')
+  logger.info(f'Telegram API ID: {args.api_id}')
+  logger.info(f'Telegram API Hash: {args.api_hash}')
+  logger.info(f'Telegram Phone Number: {args.phone_number}')
+  logger.info(f'Database Name: {args.db_name}')
+  logger.info(f'Database User: {args.db_user}')
+  logger.info(f'Database Password: {args.db_password}')
+  logger.info(f'Database Host: {args.db_host}')
+  logger.info(f'Database Port: {args.db_port}')
+  logger.info(f'Folder Name: {args.folder_name}')
+  logger.info(f'Channels: {args.channels}')
+  logger.info(f'Log Level: {args.log_level}')
+
+  return config, args
 
 
 def db_connect():
   """Establish a connection to the PostgreSQL database."""
   logger.debug('Connecting to the Teldrive database...')
-  return psycopg2.connect(**db_params)
+  return psycopg2.connect(
+    host=args.db_host,
+    port=args.db_port,
+    user=args.db_user,
+    dbname=args.db_name,
+    password=args.db_password,
+  )
 
 
 def fetch_one(query, params=None):
@@ -124,12 +244,14 @@ def execute_query(query, params):
 
 async def get_root_folder_id():
   """Get the ID of the root folder."""
-  query = sql.SQL('SELECT id FROM files WHERE name = %s AND type = %s')
+  query = sql.SQL(
+    'SELECT id FROM files WHERE name = %s AND type = %s and parent_id IS NULL'
+  )
   result = fetch_one(query, ('root', 'folder'))
   return result[0] if result else None
 
 
-async def get_channels_with_users():
+async def get_channels_from_db():
   """Get channel information along with user names."""
   query = sql.SQL(
     """
@@ -141,17 +263,17 @@ async def get_channels_with_users():
   return fetch_all(query)
 
 
-async def create_folder_in_db(parent_id, user_id, channel_id):
+async def create_folder_in_db(parent_id, user_id, folder_name):
   """Create a new folder in the database."""
   folder_id = str(uuid.uuid4())  # Generate a new UUID
   folder_data = {
-    'name': 'some_folder',
+    'name': folder_name,
     'type': 'folder',
     'mime_type': 'drive/folder',
     'size': None,  # Size is NULL
     'user_id': user_id,
     'status': 'active',
-    'channel_id': channel_id,  # Use the retrieved channel_id
+    'channel_id': None,  # Not needed for folders
     'parts': None,  # Parts is NULL
     'created_at': datetime.now(),  # Use current time for created_at
     'updated_at': datetime.now(),  # Use current time for updated_at
@@ -171,21 +293,23 @@ async def create_folder_in_db(parent_id, user_id, channel_id):
             %(channel_id)s, %(parts)s, %(created_at)s, %(updated_at)s, %(encrypted)s,
             %(category)s, %(id)s, %(parent_id)s
         )
-    """
+        """
   )
 
   execute_query(insert_query, folder_data)
-  logger.info(f'Folder created in DB: {folder_data["name"]} (ID: {folder_id})')
+  logger.info(f"Folder created in DB: '{folder_data['name']}' (ID: {folder_id})")
 
 
-async def get_or_create_folder(user_id, channel_id):
+async def get_or_create_folder(user_id, folder_name, parent_id=None):
   """Get the ID of the folder for storing files, creating it if it doesn't exist."""
-  folder_name = 'some_folder'  # The name of the folder you want to create
-  folder_type = 'folder'  # The type of the folder
+  if parent_id is None:
+    parent_id = await get_root_folder_id()
 
   # Check if the folder already exists
-  query = sql.SQL('SELECT id FROM files WHERE name = %s AND type = %s AND user_id = %s')
-  existing_folder = fetch_one(query, (folder_name, folder_type, user_id))
+  query = sql.SQL(
+    "SELECT id FROM files WHERE name = %s AND type = 'folder' AND user_id = %s AND parent_id IS NOT DISTINCT FROM %s"
+  )
+  existing_folder = fetch_one(query, (folder_name, user_id, parent_id))
 
   if existing_folder:
     # Folder exists, return its ID
@@ -193,9 +317,9 @@ async def get_or_create_folder(user_id, channel_id):
     return existing_folder[0]
   else:
     # Folder does not exist, create it
-    await create_folder_in_db(None, user_id, channel_id)  # No parent_id for root
+    await create_folder_in_db(parent_id, user_id, folder_name)  # Pass parent_id
     # Fetch the newly created folder ID
-    new_folder_id = fetch_one(query, (folder_name, folder_type, user_id))[0]
+    new_folder_id = fetch_one(query, (folder_name, user_id, parent_id))[0]
     logger.info(f"Created new folder '{folder_name}' (ID: {new_folder_id}).")
     return new_folder_id
 
@@ -228,6 +352,18 @@ async def get_all_channels():
       channels.append((channel.id, channel.title))
   logger.info(f'Fetched {len(channels)} channels.')
   return channels
+
+
+async def fetch_channel_name_from_telegram(channel_id):
+  """Fetch the channel name directly from Telegram using the channel ID."""
+  try:
+    channel = await client.get_entity(channel_id)
+    return channel.title
+  except Exception as e:
+    logger.error(
+      f'Failed to fetch channel name from Telegram for channel ID {channel_id}: {e}'
+    )
+    raise e
 
 
 def parse_channel_selection(selection, max_index):
@@ -266,7 +402,7 @@ def parse_channel_selection(selection, max_index):
 
 
 async def select_channel():
-  """Display channels and allow the user to select one or choose to search all channels."""
+  """Display channels and allow the user to select one or more channels."""
   channels = await get_all_channels()
 
   if not channels:
@@ -281,11 +417,11 @@ async def select_channel():
     ' - Enter multiple numbers separated by commas (e.g., 1,4,5) to select multiple channels.\n'
     ' - Enter a range using a hyphen (e.g., 1-3) to select a range of channels.\n'
     ' - Combine selections (e.g., 1,4,5-8) to select multiple channels and ranges.\n'
-    ' - Enter 0 to search all channels (default).\n'
+    ' - Enter 0, "a" or "all" to search all channels (default).\n'
     " - Type 'help', 'h', or '?' for this help message."
   )
 
-  print("Select one or more channel (enter 'h' for selection info):\n")
+  print("\nSelect one or more channel (enter 'h' for selection info):\n")
   print(' 0. Search all channels')
   for index, (channel_id, channel_name) in enumerate(channels):
     print(f' {index + 1}. {channel_id} ({channel_name})')
@@ -293,24 +429,28 @@ async def select_channel():
   # Get user input for channel selection
   while True:
     choice = input(
-      '\nEnter the numbers of the channels you want to select [return key = 0]: '
+      '\nEnter the numbers of the channels you want to select [return key = 0 ("all")]: '
     )
+    print() # Print an empty line
+
     if choice in ['help', 'h', '?']:
       print(help_message)
       continue
-    if choice == '':
+    if choice in ('', '0', 'a', 'all'):
       logger.info('User chose to search all channels.')
-      return None  # User chose to search all channels (default)
+      selected_indices = set(range(0,len(channels)))
+    else:
+      selected_indices = parse_channel_selection(choice, len(channels) - 1)
 
-    selected_indices = parse_channel_selection(choice, len(channels) - 1)
     if selected_indices:
-      logger.info(f'User selected channels: {selected_indices}')
+      logger.info(f'User selected channels: {set(i + 1 for i in selected_indices)}')
       return [channels[i][0] for i in selected_indices]  # Return list of channel_ids
     else:
       logger.warning('No valid channels selected. Please try again.')
 
 
 def get_category(file_name, mime_type=None):
+  """Determine the category of the file based on its MIME type or file name."""
   # If no MIME type given, try to guess it based on the file name.
   if mime_type is None:
     mime_type, _ = mimetypes.guess_type(file_name)
@@ -397,18 +537,25 @@ def check_file_exists(message_id, user_id, channel_id, parent_id, file_name):
 
 async def main():
   """Main function to run the Telegram client and process messages."""
-  # Example: Get your own user information
+
   me = await client.get_me()
   logger.info(f'User Name: {me.first_name}, User ID: {me.id}')
 
   # Select a channel
-  channel_ids_to_search = await select_channel()
+  if args.channels:
+    if args.channels.lower() == 'all':
+      channel_ids_to_search = [channel[0] for channel in await get_all_channels()]
+    else:
+      channel_ids_to_search = [int(id.strip()) for id in args.channels.split(',')]
+  else:
+    channel_ids_to_search = await select_channel()
+
   if channel_ids_to_search is None:
     logger.info('Proceeding with all channels.')
   logger.info(f'Selected channel IDs: {channel_ids_to_search}')
 
   # Fetch channels for the selected user
-  channels = await get_channels_with_users()
+  channels = await get_channels_from_db()
   channel_ids = {channel[0] for channel in channels}  # Set of existing channel IDs
   logger.debug(f'Teldrive DB (channels): {channels}')
   logger.info(
@@ -417,13 +564,17 @@ async def main():
 
   added_channels = set()  # To keep track of added channels
 
-  # Ensure the specific folder exists and get its ID
-  parent_folder_id = await get_or_create_folder(
-    me.id, None
-  )  # Pass None for channel_id if not needed
+  # Ensure the "imported" root folder exists and get its ID
+  base_folder_id = await get_or_create_folder(me.id, args.folder_name)
 
   for channel_id in channel_ids_to_search:
-    logger.info(f'Processing messages from channel ID: {channel_id})')
+    # Ensure the subfolder for the channel exists and get its ID
+    channel_name = await fetch_channel_name_from_telegram(channel_id)
+    channel_folder_id = await get_or_create_folder(
+      me.id, f'channel_{channel_id}_{channel_name}', base_folder_id
+    )
+
+    logger.info(f'Processing messages from channel ID: {channel_id}')
     async for message in client.iter_messages(
       channel_id, filter=InputMessagesFilterDocument
     ):
@@ -453,6 +604,7 @@ async def main():
         'mime_type': message.file.mime_type,
         'date': message.date,
         'message_id': message.id,
+        'channel_id': channel_id,  # Add channel_id to file metadata
       }
 
       logger.info(f"Media found: '{file_name}'")
@@ -460,14 +612,25 @@ async def main():
 
       # Check if the file already exists in the database
       if not check_file_exists(
-        message.id, me.id, channel_id, parent_folder_id, file_name
+        message.id, me.id, channel_id, channel_folder_id, file_name
       ):
-        # Add file metadata to the database with the parent folder ID
-        await add_file_to_db(file_metadata, me.id, channel_id, parent_folder_id)
+        # Add file metadata to the database with the channel's folder ID
+        await add_file_to_db(file_metadata, me.id, channel_id, channel_folder_id)
 
 
 # Run the client
 if __name__ == '__main__':
+  _, args = setup_configuration()
+
+  api_id = args.api_id
+  api_hash = args.api_hash
+  phone_number = args.phone_number
+
+  # Create the Telegram client
+  client = TelegramClient('telegram2teldrive', api_id, api_hash).start(
+    phone=phone_number
+  )
+
   with client:
     logger.info('Starting the Telegram client...')
     client.loop.run_until_complete(main())
