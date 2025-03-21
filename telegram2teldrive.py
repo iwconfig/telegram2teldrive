@@ -141,18 +141,28 @@ def setup_configuration():
   """Setup configuration from environment variables, config file, and command-line arguments."""
   # Load configuration from file provided via the CONFIG_FILE environment variable
   config = {}
+  
+  # Check for default config files
+  default_config_files = ['telegram2teldrive.toml', 'telegram2teldrive.conf']
+  for config_file in default_config_files:
+      if os.path.isfile(config_file):
+          logger.info(f"Loading config from default file: '{config_file}'")
+          config = load_toml_config(config_file)
+          break
+  
+  # Check for environment variable
   env_config_file = os.getenv('CONFIG_FILE')
   if env_config_file:
-    logger.info(f"Loading config from ENV file: '{env_config_file}'")
-    config = load_toml_config(env_config_file)
-
+      logger.info(f"Loading config from ENV file: '{env_config_file}'")
+      config = load_toml_config(env_config_file)
+  
   args = setup_argparser(config)
-
+  
   # If config file provided via the command-line argument --config, load it and re-parse args.
   if args.config:
-    logger.info(f"Loading config from provided file: '{args.config}'")
-    config = load_toml_config(args.config)
-    args = setup_argparser(config)
+      logger.info(f"Loading config from provided file: '{args.config}'")
+      config = load_toml_config(args.config)
+      args = setup_argparser(config)
 
   # Get the logging level from the command line argument or environment variable
   logger.setLevel(log_levels.get(args.log_level.upper(), logging.INFO))
