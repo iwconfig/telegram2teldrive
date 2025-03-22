@@ -413,7 +413,8 @@ def parse_channel_selection(selection, max_index):
 
 async def select_channel():
   """Display channels and allow the user to select one or more channels."""
-  channels = await get_all_channels()
+  # Sort by channel id
+  channels = sorted(await get_all_channels(), key=lambda x: x[0])
 
   if not channels:
     logger.warning('No channels found.')
@@ -534,12 +535,12 @@ def check_file_exists(message_id, user_id, channel_id, file_name):
 
   if result:
     if result[1] != file_name:
-      logger.warning(
-        f"File with message ID {message_id} already exists with a different name: '{result[1]}'"
+      logger.error(
+        f"File '{file_name}' with message ID '{message_id}' already exists as '{result[1]}' in the DB."
       )
     else:
       logger.info(
-        f"File with message ID {message_id} already exists in the Teldrive DB."
+        f"File '{file_name}' with message ID '{message_id}' already exists in the DB."
       )
 
   return result
@@ -617,7 +618,7 @@ async def main():
         'channel_id': channel_id,  # Add channel_id to file metadata
       }
 
-      logger.info(f"Media found: '{file_name}'")
+      logger.info(f"File found: '{file_name}'")
       logger.debug(f'File metadata collected: {file_metadata}')
 
       # Check if the file already exists in the database
