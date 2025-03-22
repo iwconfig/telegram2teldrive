@@ -536,11 +536,11 @@ def check_file_exists(message_id, user_id, channel_id, file_name):
   if result:
     if result[1] != file_name:
       logger.error(
-        f"File '{file_name}' with message ID '{message_id}' already exists as '{result[1]}' in the DB."
+        f"File '{file_name}' with message ID {message_id} already exists as '{result[1]}' in the DB."
       )
     else:
       logger.info(
-        f"File '{file_name}' with message ID '{message_id}' already exists in the DB."
+        f"File '{file_name}' with message ID {message_id} already exists in the DB."
       )
 
   return result
