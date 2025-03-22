@@ -3,6 +3,10 @@ Find existing files in Telegram channels that has not been uploaded using Teldri
 
 ---
 
+## TODO (perhaps)
+
+- Use the Teldrive API instead of modifying DB directly.
+
 ## Prerequisites
 
 - python3
