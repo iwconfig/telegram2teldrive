@@ -523,23 +523,23 @@ async def add_file_to_db(file_metadata, user_id, channel_id, parent_id):
   )
 
 
-def check_file_exists(message_id, user_id, channel_id, parent_id, file_name):
+def check_file_exists(message_id, user_id, channel_id, file_name):
   """Check if a file with the given metadata already exists in the database."""
   query = sql.SQL(
-    'SELECT id, name FROM files WHERE parts @> %s::jsonb AND user_id = %s AND channel_id = %s AND parent_id = %s'
+    'SELECT id, name FROM files WHERE parts @> %s::jsonb AND user_id = %s AND channel_id = %s'
   )
   result = fetch_one(
-    query, (json.dumps([{'id': message_id}]), user_id, channel_id, parent_id)
+    query, (json.dumps([{'id': message_id}]), user_id, channel_id)
   )
 
   if result:
     if result[1] != file_name:
       logger.warning(
-        f"File with message ID '{message_id}' already exists with a different name: {result[1]}"
+        f"File with message ID {message_id} already exists with a different name: '{result[1]}'"
       )
     else:
       logger.info(
-        f"File with message ID '{message_id}' already exists in the Teldrive DB."
+        f"File with message ID {message_id} already exists in the Teldrive DB."
       )
 
   return result
@@ -622,7 +622,7 @@ async def main():
 
       # Check if the file already exists in the database
       if not check_file_exists(
-        message.id, me.id, channel_id, channel_folder_id, file_name
+        message.id, me.id, channel_id, file_name
       ):
         # Add file metadata to the database with the channel's folder ID
         await add_file_to_db(file_metadata, me.id, channel_id, channel_folder_id)
@@ -632,13 +632,9 @@ async def main():
 if __name__ == '__main__':
   _, args = setup_configuration()
 
-  api_id = args.api_id
-  api_hash = args.api_hash
-  phone_number = args.phone_number
-
   # Create the Telegram client
-  client = TelegramClient('telegram2teldrive', api_id, api_hash).start(
-    phone=phone_number
+  client = TelegramClient('telegram2teldrive', args.api_id, args.api_hash).start(
+    phone=args.phone_number
   )
 
   with client:
